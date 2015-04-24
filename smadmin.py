@@ -123,51 +123,70 @@ def put_file(filename, localfilename):
             local.close()
 
 def download_plugin(maindl: tuple, extra: list, other_smxs: list):
-    chosen_dl = None
+    to_dl = []
     if other_smxs != []:
         if maindl is None and len(other_smxs) == 1:
-            chosen_dl = other_smxs[0]
-        print("Multiple SMXs have been identified.")
-        offset = 1
-        if maindl != None:
-            print("1. Main Download ({name}) (recommended)".format(name=maindl[1]))
-        for smx in other_smxs:
-            print("{offset}. {name}".format(offset=offset+1, name=smx[1]))
-            offset += 1
-        choice = input("Please choose number of DL you want to install: ")
-        if not is_number(choice):
-            print("Not a number.")
-            return False
+            to_dl.append(other_smxs[0])
         else:
-            choice = int(choice)
-            if maindl is not None:
-                if choice == 1:
-                    chosen_dl = maindl
-                else:
-                    chosen_dl = other_smxs[choice - 2]
+            print("Multiple SMXs have been identified.")
+            offset = 1
+            if maindl != None:
+                print("1. Main Download ({name}) (recommended)".format(name=maindl[1]))
+            for smx in other_smxs:
+                print("{offset}. {name}".format(offset=offset+1, name=smx[1]))
+                offset += 1
+            print("You can choose multiple SMXs by separating the numbers with commas.")
+            choice = input("Please choose number(s) of DL you want to install: ")
+            if ',' in choice:
+                choice = [x.replace(' ', '') for x in choice.split(',') if x != '']
             else:
-                chosen_dl = other_smxs[choice - 1]
+                choice = [choice]
+            for smx in choice:
+                if not is_number(smx):
+                    print("Not a number.")
+                    return False
+                else:
+                    smx = int(smx)
+                    if maindl is not None:
+                        if smx == 1:
+                            to_dl.append(maindl)
+                        else:
+                            to_dl.append(other_smxs[smx - 2])
+                    else:
+                        to_dl.append(other_smxs[smx - 1])
+    else:
+        to_dl.append(maindl)
     with tempfile.TemporaryDirectory() as dir:
-        print("Downloading plugin file...", end='')
-        r = requests.get(chosen_dl[0])
+        print("Downloading primary plugin file...", end='')
+        dl_link = to_dl[0][0] if 'http://' in to_dl[0][0] else "http://forums.alliedmods.net/" + to_dl[0][0]
+        r = requests.get(dl_link)
         if r.content == b"Plugin failed to compile! Please try contacting the author.":
-            print("Error: Main plugin DL failed to compile. Please set an alternative SMX to download.")
-            return False
-        with open('{d}/{f}'.format(d=dir, f=chosen_dl[1]), 'wb') as f:
+            print("\nError: Main plugin DL failed to compile. Continuing download...")
+        else:
+            with open('{d}/{f}'.format(d=dir, f=to_dl[0][1]), 'wb') as f:
                 f.write(r.content)
-        # print("Downloaded", os.path.getsize('{d}/{f}'.format(d=dir, f=chosen_dl[1])), "bytes")
-        print("done.")
-        # Copy file
-        put_file(config['server_root'] + '/addons/sourcemod/plugins/{name}'.format(name=chosen_dl[1]),
-                 '{d}/{f}'.format(d=dir, f=chosen_dl[1]))
-        print("Copied plugin to server.")
+            # print("Downloaded", os.path.getsize('{d}/{f}'.format(d=dir, f=chosen_dl[1])), "bytes")
+            print("done.")
+            # Copy file
+            put_file(config['server_root'] + '/addons/sourcemod/plugins/{name}'.format(name=to_dl[0][1]),
+                     '{d}/{f}'.format(d=dir, f=to_dl[0][1]))
+            print("Copied plugin to server.")
+        if len(to_dl) > 1:
+            for num, smx in enumerate(to_dl[1:]):
+                print("Downloading extra plugin {}/{}...".format(num+1, len(to_dl)-1))
+                dl_link = smx[0] if 'http://' in smx[0] else "http://forums.alliedmods.net/" + smx[0]
+                r = requests.get(dl_link)
+                with open('{d}/{f}'.format(d=dir, f=smx[1]), 'wb') as f:
+                    f.write(r.content)
+                put_file(config['server_root'] + '/addons/sourcemod/plugins/{name}'.format(name=smx[1]),
+                    '{d}/{f}'.format(d=dir, f=smx[1]))
         print("Setting up optional files...")
         if not extra:
             print("No extra files to setup.")
         else:
             for file in extra:
                 # Identify filetype
-                nname = "http://www.sourcemod.net/" + file[0]
+                nname = "http://forums.alliedmods.net/" + file[0]
                 remotedir = '/addons/sourcemod/'
                 if '.txt' in file[1]:
                     remotedir += 'translations/'
