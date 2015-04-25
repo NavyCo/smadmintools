@@ -2,6 +2,8 @@
 smadmin provides a set of easy tools to manage a sourcemod server with.  
 smadmin connects to your server over either FTP or SSH. It can remotely install plugins, disable them, automatically setup MetaMod:Source and SourceMod on a new server, and more.  
   
+smadmin is MIT Licenced. That means, it's free as in freedom, free as in free beer and free as in Dota 2. It also doesn't use a restrictive licence, such as the GPLv3.
+  
 ## Dependencies
 smadmin is written in Python 3, using the libraries BeautifulSoup and requests. For SSH support, Paramiko is also required.  
 
