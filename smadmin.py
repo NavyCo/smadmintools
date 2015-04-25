@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import tarfile
 from bs4 import BeautifulSoup
 import sys
 import requests
@@ -15,6 +16,9 @@ if config['connection_agent'] == 'ssh':
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 elif config['connection_agent'] == 'ftp':
     import ftplib
+
+mmurl = "http://www.gsptalk.com/mirror/sourcemod/mmsource-1.10.4-linux.tar.gz"
+smurl = "http://sourcemod.gameconnect.net/files/sourcemod-1.7.1-linux.tar.gz"
 
 try:
     import readline
@@ -87,14 +91,63 @@ def get_user_parsed_input():
         else:
             for config in newinput[1:]:
                 edit_file(config)
+    elif cmd == 'installdir':
+        if len(newinput) < 2:
+            print("Error: Must specify a directory.")
+        else:
+            install_from_directory(newinput[1])
+    elif cmd == "setup":
+        if len(newinput) < 2:
+            print("Error: Must specify mod to set up.")
+        else:
+            if newinput[1] == 'sourcemod':
+                setup(2)
+            elif newinput[1] == 'metamod':
+                setup(1)
+            else:
+                print("Error: Unknown mod to setup.")
     elif cmd == "help":
         print("List of commands: ")
-        print("\thelp: Displays this help message")
-        print("\texit: Exits smadmintool")
-        print("\tinstallt: Installs from the specified threads")
-        print("\tedit: Edits the specified file.")
+        print("help: Displays this help message")
+        print("exit: Exits smadmintool")
+        print("installt: Installs from the specified threads")
+        print("installdir: Installs all files froum the specified directory.")
+        print("This directory must be laid out like an addons/ directory, with a sourcemod directory in it and such.")
+        print("edit: Edits the specified file.")
+        print("setup metamod: Downloads and installs Metamod:Source.")
+        print("setup sourcemod: Downloads and installs SourceMod.")
     else:
         print("Invalid command")
+
+def setup(mod: int):
+    if mod == 1:
+        print("Downloading latest MM:S...")
+        with tempfile.TemporaryDirectory() as dir:
+            r = requests.get(mmurl)
+            if r.status_code != 200:
+                print("Error downloading. URL has probably changed.")
+                return
+            with open(dir + "/mm.tar.gz", 'wb') as f:
+                f.write(r.content)
+            os.mkdir(dir + '/mm')
+            t = tarfile.open(dir + '/mm.tar.gz')
+            t.extractall(dir + '/mm')
+            install_from_directory(dir + '/mm/addons/')
+        print("Installed.")
+    elif mod == 2:
+        print("Downloading latest SM...")
+        with tempfile.TemporaryDirectory() as dir:
+            r = requests.get(smurl)
+            if r.status_code != 200:
+                print("Error downloading. URL has probably changed.")
+                return
+            with open(dir + "/sm.tar.gz", 'wb') as f:
+                f.write(r.content)
+            os.mkdir(dir + '/sm')
+            t = tarfile.open(dir + '/sm.tar.gz')
+            t.extractall(dir + '/sm/')
+            install_from_directory(dir + '/sm/addons/')
+        print("Installed.")
 
 def get_user_input_plugin_url(url):
     try:
@@ -102,7 +155,12 @@ def get_user_input_plugin_url(url):
     except requests.exceptions.MissingSchema:
         print("Sorry, the URL you provided is not valid.")
         return (None, None, None)
-
+    if r.status_code == 404:
+        print("Error: Thread could not be located.")
+        return None, None, None
+    elif r.status_code != 200:
+        print("Error: Unknown error. Exiting.")
+        return None, None, None
     bs = BeautifulSoup(r.content)
     print("Downloading and installing plugin {pl}".format(
         pl='-'.join(bs.title.text.split('-')[:-1])
@@ -121,31 +179,63 @@ def get_user_input_plugin_url(url):
     if other_smxs == []:
         print("No extra SMX files identified.")
         if maindl is None:
-            print("ERROR: No SMX downloads available! Cannot install the plugin.")
-            return (None, None, None)
+            print("Warning: No SMX files identified. This may be a zip-plugin (results may vary) or a data-only plugin.")
+            return (None, extra_dls, [])
     else:
         print("Extra SMX files: ")
         for smx in other_smxs:
             print("\t" + smx[1])
     return (maindl, extra_dls, other_smxs) if input("Continue? [Y/n] ").lower() == 'y' else (None, None, None)
 
+def exists(remotefile):
+    if config['connection_agent'] == 'ssh':
+        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
+        try:
+            sftp.stat(remotefile)
+        except IOError:
+            return False
+        else:
+            return True
+    elif config['connection_agent'] == 'ftp':
+        l = ftp.nlst(config['server_root'] + '/' + remotefile.split('/')[:-1])
+        return remotefile in l
+
 def put_file(filename, localfilename):
     if config['connection_agent'] == 'ssh':
         assert isinstance(ssh, paramiko.SSHClient)
         sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
+        # Check file exists
+        rootdir = '/'.join(filename.split('/')[:-1])
+        try:
+            sftp.mkdir(rootdir)
+        except IOError:
+            pass
         with sftp.open(filename, 'wb') as f:
             local = open(localfilename, 'rb')
             f.write(local.read())
             local.close()
     elif config['connection_agent'] == 'ftp':
+        rootdir = '/'.join(filename.split('/')[:-1])
         with open(localfilename, 'rb') as local:
             ftp.storbinary("STOR {}".format(filename), local)
 
-def get_file(filename, localfilename, openflag='rb'):
+def get_file(filename, localfilename):
     if config['connection_agent'] == 'ssh':
         sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
-        sftp.get(filename, localfilename)
-        return open(localfilename)
+        try:
+            sftp.get(filename, localfilename)
+        except FileNotFoundError:
+            print("File not found on the server. Did you enter the right filename?")
+            return False
+        return True
+    elif config['connection_agent'] == "ftp":
+        with open(localfilename, 'wb') as f:
+            try:
+                ftp.retrbinary("RETR {}".format(filename), f.write)
+            except Exception as e:
+                print("Error: {}".format(e))
+                return False
+            return True
 
 def download_plugin(maindl: tuple, extra: list, other_smxs: list):
     to_dl = []
@@ -235,11 +325,25 @@ def download_plugin(maindl: tuple, extra: list, other_smxs: list):
                 print("Downloaded and copied.")
         print("Installed plugin.")
 
+def install_from_directory(directory):
+    if not os.path.exists(directory):
+        print("Directory does not exist. Cannot install.")
+        return
+    for root, _, files in os.walk(directory):
+        for file in files:
+            print("Copying file {f}...".format(f=file), end='')
+            servroot = root.split('addons/')[1]
+            put_file(config['server_root'] + 'addons/' + servroot + '/' + file, root + '/' + file)
+            print("done.")
+
 def edit_file(file):
     with tempfile.TemporaryDirectory() as dir:
-        localfsname = dir + file.split('/')[-1]
+        localfsname = dir + '/' + file.split('/')[-1]
         print("Downloading file...")
-        get_file(config['server_root'] + file, localfsname)
+        has = get_file(config['server_root'] + file, localfsname)
+        if not has:
+            print("Cannot edit file.")
+            return
         editor = os.getenv('EDITOR')
         if not editor: editor = '/usr/bin/nano'
         subprocess.call([editor, localfsname])
@@ -263,6 +367,8 @@ if __name__ == "__main__":
             sys.exit(1)
         motd = ''.join(ssh.exec_command("cat /var/run/motd.dynamic")[1].readlines())
     else:
+        if ['connection_agent'] != 'ftp':
+            print("Unrecognised connection agent. Defaulting to FTP.")
         has_ftp = True
         print("Connecting to {h} FTP...".format(h=config['host']))
         ftp = ftplib.FTP(host=config['host'])
@@ -274,8 +380,10 @@ if __name__ == "__main__":
             sys.exit(1)
         motd = ftp.getwelcome()
     print("Connected. System MOTD:\n{motd}".format(motd=motd.replace('220', '')))
-
-    print()
+    if not exists(config['server_root'] + '/addons/metamod.vdf'):
+        print("Metamod:Source doesn't seem to be installed.\nRun \"setup metamod\"to download and install it.")
+    if not exists(config['server_root'] + '/addons/sourcemod'):
+        print("SourceMod doesn't seem to be installed.\nRun \"setup sourcemod\" to download and install it.")
     while True:
         uip = get_user_parsed_input()
         if uip is False:
