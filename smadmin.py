@@ -77,7 +77,11 @@ def list_files(path: str):
     """
     if config['connection_agent'] == 'ssh':
         sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
-        return sftp.listdir(path)
+        try:
+            return sftp.listdir(path)
+        except IOError:
+            print("Directory not found.")
+            return []
     elif config['connection_agent'] == 'ftp':
         return ftp.nlst(path)
 
@@ -259,7 +263,26 @@ def install_file(flink, ftype='', name="guess"):
 
 
 def swap_plugin_status(plugin, status):
-    pass
+    if status:
+        # Enable
+        flist = list_files(path=config['server_root'] + '/addons/sourcemod/plugins/disabled')
+        if not '.smx' in plugin: plugin += '.smx'
+        if plugin in flist:
+            move_file(config['server_root'] + '/addons/sourcemod/plugins/disabled/' + plugin,
+                      config['server_root'] + '/addons/sourcemod/plugins/' + plugin)
+            print("Plugin {} enabled.".format(plugin))
+        else:
+            print("Plugin {} does not exist.".format(plugin))
+    else:
+        # Disable
+        flist = list_files(path=config['server_root'] + '/addons/sourcemod/plugins/')
+        if not '.smx' in plugin: plugin += '.smx'
+        if plugin in flist:
+            move_file(config['server_root'] + '/addons/sourcemod/plugins/' + plugin,
+                      config['server_root'] + '/addons/sourcemod/plugins/disabled/' + plugin)
+            print("Plugin {} disabled.".format(plugin))
+        else:
+            print("Plugin {} does not exist.".format(plugin))
 
 
 def setup(mod: int):
@@ -511,13 +534,15 @@ def get_user_parsed_input():
             path = config['server_root']
         else:
             path = config['server_root'] + newinput[1]
-        print('\t'.join(list_files(path=path)))
+        print(' '.join(sorted(list_files(path=path))))
     elif cmd == "lsplugine":
         print(
-            '\n'.join([x for x in list_files(path=config['server_root'] + '/addons/sourcemod/plugins') if '.smx' in x]))
+            '\n'.join(sorted(
+                [x for x in list_files(path=config['server_root'] + '/addons/sourcemod/plugins') if '.smx' in x])))
     elif cmd == "lsplugind":
         print('\n'.join(
-            [x for x in list_files(path=config['server_root'] + '/addons/sourcemod/plugins/disabled') if '.smx' in x]))
+            sorted([x for x in list_files(path=config['server_root'] + '/addons/sourcemod/plugins/disabled') if
+                    '.smx' in x])))
     elif cmd == "disable":
         if len(newinput) < 2:
             print("Error: Must specify at least one plugin to disable.")
