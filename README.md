@@ -16,7 +16,7 @@ Valid commands are listed as follows:
 help: Displays this help message
 exit: Exits smadmintool
 installt: Installs from the specified threads
-installdir: Installs all files froum the specified directory.
+installdir: Installs all files from the specified directory.
 	This directory must be laid out like an addons/ directory, with a sourcemod directory in it and such.
 edit: Edits the specified file.
 setup metamod: Downloads and installs Metamod:Source.

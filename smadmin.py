@@ -567,7 +567,7 @@ def get_user_parsed_input():
         print("help: Displays this help message")
         print("exit: Exits smadmintool")
         print("installt: Installs from the specified threads")
-        print("installdir: Installs all files froum the specified directory.")
+        print("installdir: Installs all files from the specified directory.")
         print("\tThis directory must be laid out like an addons/ directory, with a sourcemod directory in it and such.")
         print("edit: Edits the specified file.")
         print("setup metamod: Downloads and installs Metamod:Source.")
