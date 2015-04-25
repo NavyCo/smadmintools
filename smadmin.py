@@ -187,6 +187,9 @@ def install_file(flink, ftype='', name="guess"):
             else:
                 print("Warning: Unrecognised file type. Installing into the directory you provided...")
     if not "http://" in flink and not "https://" in flink:
+        if not os.path.exists(flink):
+            print("Error: File does not exist. Cannot be installed.")
+            return
         if name == "guess":
             put_file(path + flink.split('/')[-1], flink)
         else:
