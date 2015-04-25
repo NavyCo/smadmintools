@@ -139,9 +139,15 @@ def get_file(filename: str, localfilename: str):
 def move_file(oldfilename: str, newfilename: str):
     if config['connection_agent'] == "ssh":
         sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
-        sftp.rename(oldfilename, newfilename)
+        try:
+            sftp.rename(oldfilename, newfilename)
+            return True
+        except IOError:
+            print("Error: File does not exist on server.")
+            return False
     elif config['connection_agent'] == 'ftp':
         ftp.rename(oldfilename, newfilename)
+        return True
 
 
 # SM functions
@@ -268,9 +274,10 @@ def swap_plugin_status(plugin, status):
         flist = list_files(path=config['server_root'] + '/addons/sourcemod/plugins/disabled')
         if not '.smx' in plugin: plugin += '.smx'
         if plugin in flist:
-            move_file(config['server_root'] + '/addons/sourcemod/plugins/disabled/' + plugin,
+            success = move_file(config['server_root'] + '/addons/sourcemod/plugins/disabled/' + plugin,
                       config['server_root'] + '/addons/sourcemod/plugins/' + plugin)
-            print("Plugin {} enabled.".format(plugin))
+            if success:
+                print("Plugin {} enabled.".format(plugin))
         else:
             print("Plugin {} does not exist.".format(plugin))
     else:
@@ -278,9 +285,9 @@ def swap_plugin_status(plugin, status):
         flist = list_files(path=config['server_root'] + '/addons/sourcemod/plugins/')
         if not '.smx' in plugin: plugin += '.smx'
         if plugin in flist:
-            move_file(config['server_root'] + '/addons/sourcemod/plugins/' + plugin,
+            success = move_file(config['server_root'] + '/addons/sourcemod/plugins/' + plugin,
                       config['server_root'] + '/addons/sourcemod/plugins/disabled/' + plugin)
-            print("Plugin {} disabled.".format(plugin))
+            if success: print("Plugin {} disabled.".format(plugin))
         else:
             print("Plugin {} does not exist.".format(plugin))
 
