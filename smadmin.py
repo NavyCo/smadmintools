@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 import os
+# MetaMod:Source and SM extracting
 import tarfile
-import bs4
-from bs4 import BeautifulSoup
+# HTML parsing
+from bs4 import BeautifulSoup, element
+# Standard import
 import sys
+# File downloading and such
 import requests
+# Heavy use of temporary directories
 import tempfile
+# Escaping user input
 import shlex
+# Running the editor
 import subprocess
 from config import config
 global ssh
@@ -54,6 +60,18 @@ def exists(remotefile: str) -> bool:
     elif config['connection_agent'] == 'ftp':
         l = ftp.nlst(config['server_root'] + '/' + remotefile.split('/')[:-1])
         return remotefile in l
+
+def list_files(path: str):
+    """
+    Lists files.
+    :param path: The path to list from.
+    :return: A list of the files.
+    """
+    if config['connection_agent'] == 'ssh':
+        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
+        return sftp.listdir(path)
+    elif config['connection_agent'] == 'ftp':
+        return ftp.nlst(path)
 
 def put_file(filename: str, localfilename: str):
     """
@@ -115,7 +133,7 @@ def get_plugin_name_and_link(b: BeautifulSoup):
         return None, None, None
     tables = root_tag.find_all('td')
     # Check if the result is empty.
-    if tables == bs4.element.ResultSet(""):
+    if tables == element.ResultSet(""):
         print("Error: Could not find any table tags - link is probably incorrect.")
         return None, None, None
     # Define tables to get data from
@@ -142,7 +160,6 @@ def get_plugin_name_and_link(b: BeautifulSoup):
                 # print("Identified other download")
                 extra_dls.append((table.find_all('a')[0].get('href'), table.text.replace('\n', '').split('(')[0][:-1])) # UGH
     return maindl, extra_dls, other_smxs
-
 
 def install_file(flink, ftype='', name="guess"):
     """
@@ -212,6 +229,10 @@ def install_file(flink, ftype='', name="guess"):
                 put_file(path + name, dir + '/' + name)
     print("Installed file.")
 
+
+def swap_plugin_status(plugin, status):
+    pass
+
 def get_user_parsed_input():
     # I hate myself
     try:
@@ -237,8 +258,8 @@ def get_user_parsed_input():
         if len(newinput) < 2:
             print("Error: Must specifiy at least one config.")
         else:
-            for config in newinput[1:]:
-                edit_file(config)
+            for cfg in newinput[1:]:
+                edit_file(cfg)
     elif cmd == 'installdir':
         if len(newinput) < 2:
             print("Error: Must specify a directory.")
@@ -264,6 +285,28 @@ def get_user_parsed_input():
                 install_file(newinput[1], name=newinput[2])
             else:
                 install_file(newinput[1], newinput[3], newinput[2])
+    elif cmd == "ls":
+        if len(newinput) < 2:
+            path = config['server_root']
+        else:
+            path = config['server_root'] + newinput[1]
+        print('\t'.join(list_files(path=path)))
+    elif cmd == "lsplugine":
+        print('\n'.join([x for x in list_files(path=config['server_root'] + '/addons/sourcemod/plugins') if '.smx' in x]))
+    elif cmd == "lsplugind":
+        print('\n'.join([x for x in list_files(path=config['server_root'] + '/addons/sourcemod/plugins/disabled') if '.smx' in x]))
+    elif cmd == "disable":
+        if len(newinput) < 2:
+            print("Error: Must specify at least one plugin to disable.")
+        else:
+            for x in newinput[1:]:
+                swap_plugin_status(x, False)
+    elif cmd == "enable":
+        if len(newinput) < 2:
+            print("Error: Must specify at least one plugin to enable.")
+        else:
+            for x in newinput[1:]:
+                swap_plugin_status(x, True)
     elif cmd == "help":
         print("List of commands: ")
         print("help: Displays this help message")
@@ -276,6 +319,10 @@ def get_user_parsed_input():
         print("setup sourcemod: Downloads and installs SourceMod.")
         print("installf: Installs from a file or direct link.")
         print("\tThis command goes in the format: installf file <file_to_install_name> <filetype>")
+        print("ls: Lists a remote directory.")
+        print("lsplugine: Lists the enabled plugins.")
+        print("disable: Disables a plugin.")
+        print("lsplugind: Lists all the disabled plugins.")
     else:
         print("Invalid command")
 
@@ -349,7 +396,7 @@ def get_user_input_plugin_url(url):
 
 def download_plugin(maindl: tuple, extra: list, other_smxs: list):
     to_dl = []
-    if other_smxs != []:
+    if other_smxs:
         if maindl is None and len(other_smxs) == 1:
             to_dl.append(other_smxs[0])
         else:
@@ -456,9 +503,12 @@ def edit_file(file):
         if not has:
             print("Cannot edit file.")
             return
-        editor = os.getenv('EDITOR')
-        if not editor: editor = '/usr/bin/nano'
-        subprocess.call([editor, localfsname])
+        if os.name == "posix":
+            editor = os.getenv('EDITOR')
+            if not editor: editor = '/usr/bin/nano'
+            subprocess.call([editor, localfsname])
+        elif os.name == "nt": # Windows support
+            os.startfile(localfsname)
         print("Saving file...")
         put_file(config['server_root'] + file, localfsname)
 
