@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
+import os
 from bs4 import BeautifulSoup
 import sys
 import requests
 import tempfile
 import shlex
+import subprocess
 from config import config
+global ssh
+global ftp
 if config['connection_agent'] == 'ssh':
     import paramiko
-    global ssh
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 elif config['connection_agent'] == 'ftp':
     import ftplib
-
-import os.path
 
 try:
     import readline
@@ -28,7 +29,7 @@ def is_number(number: str):
         except ValueError:
             return False
 
-# Any definitions here  should be ignored unless you like seeing bad code
+# Any definitions here should be ignored unless you like seeing bad code
 # Just get an IDE and compress it
 
 def get_plugin_name_and_link(b: BeautifulSoup):
@@ -78,6 +79,20 @@ def get_user_parsed_input():
                     print("Download cancelled.")
                 else:
                     download_plugin(maindl, extra_dls, other_smxs)
+    elif cmd == "exit":
+        return False
+    elif cmd == 'edit':
+        if len(newinput) < 2:
+            print("Error: Must specifiy at least one config.")
+        else:
+            for config in newinput[1:]:
+                edit_file(config)
+    elif cmd == "help":
+        print("List of commands: ")
+        print("\thelp: Displays this help message")
+        print("\texit: Exits smadmintool")
+        print("\tinstallt: Installs from the specified threads")
+        print("\tedit: Edits the specified file.")
     else:
         print("Invalid command")
 
@@ -116,11 +131,21 @@ def get_user_input_plugin_url(url):
 
 def put_file(filename, localfilename):
     if config['connection_agent'] == 'ssh':
+        assert isinstance(ssh, paramiko.SSHClient)
         sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
         with sftp.open(filename, 'wb') as f:
             local = open(localfilename, 'rb')
             f.write(local.read())
             local.close()
+    elif config['connection_agent'] == 'ftp':
+        with open(localfilename, 'rb') as local:
+            ftp.storbinary("STOR {}".format(filename), local)
+
+def get_file(filename, localfilename, openflag='rb'):
+    if config['connection_agent'] == 'ssh':
+        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
+        sftp.get(filename, localfilename)
+        return open(localfilename)
 
 def download_plugin(maindl: tuple, extra: list, other_smxs: list):
     to_dl = []
@@ -210,11 +235,22 @@ def download_plugin(maindl: tuple, extra: list, other_smxs: list):
                 print("Downloaded and copied.")
         print("Installed plugin.")
 
-def edit_config_file(file): pass
+def edit_file(file):
+    with tempfile.TemporaryDirectory() as dir:
+        localfsname = dir + file.split('/')[-1]
+        print("Downloading file...")
+        get_file(config['server_root'] + file, localfsname)
+        editor = os.getenv('EDITOR')
+        if not editor: editor = '/usr/bin/nano'
+        subprocess.call([editor, localfsname])
+        print("Saving file...")
+        put_file(config['server_root'] + file, localfsname)
 
 if __name__ == "__main__":
+    has_ssh, has_ftp = False, False
     if config['connection_agent'] == "ssh":
-        print("Connecting to {h} TF2 remote console...".format(h=config['host']))
+        has_ssh = True
+        print("Connecting to {h} SSH remote console...".format(h=config['host']))
         try:
             ssh.connect(config['host'], username=config['user'])
         except paramiko.AuthenticationException:
@@ -227,18 +263,22 @@ if __name__ == "__main__":
             sys.exit(1)
         motd = ''.join(ssh.exec_command("cat /var/run/motd.dynamic")[1].readlines())
     else:
-        print("Sorry, only the SSH connection agent is currently supported.")
-        motd = "No MOTD available."
-    print("Connected. System MOTD:\n{motd}".format(motd=motd))
+        has_ftp = True
+        print("Connecting to {h} FTP...".format(h=config['host']))
+        ftp = ftplib.FTP(host=config['host'])
+        print("Logging in as user {u}".format(u=config['user']))
+        try:
+            ftp.login(user=config['user'], passwd=config['ftp_pass'])
+        except ftplib.error_perm:
+            print("Login failed: Incorrect username or password.")
+            sys.exit(1)
+        motd = ftp.getwelcome()
+    print("Connected. System MOTD:\n{motd}".format(motd=motd.replace('220', '')))
 
     print()
     while True:
         uip = get_user_parsed_input()
-        if uip is False: break
-
-    #maindl, extra_dls, other_smxs = get_user_input_plugin_url("https://forums.alliedmods.net/showthread.php?t=210221")
-    #if not maindl and not extra_dls and not other_smxs:
-    #    print("Download cancelled.")
-    #else:
-    #    download_plugin(maindl, extra_dls, other_smxs)
-
+        if uip is False:
+            if has_ssh: ssh.close()
+            if has_ftp: ftp.close()
+            break
