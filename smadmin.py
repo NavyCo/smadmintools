@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import tarfile
+import bs4
 from bs4 import BeautifulSoup
 import sys
 import requests
@@ -36,9 +37,87 @@ def is_number(number: str):
 # Any definitions here should be ignored unless you like seeing bad code
 # Just get an IDE and compress it
 
+def exists(remotefile: str) -> bool:
+    """
+    Check if a file exists on the server.
+    :param remotefile: The filename to check.
+    :return: If it exists or not.
+    """
+    if config['connection_agent'] == 'ssh':
+        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
+        try:
+            sftp.stat(remotefile)
+        except IOError:
+            return False
+        else:
+            return True
+    elif config['connection_agent'] == 'ftp':
+        l = ftp.nlst(config['server_root'] + '/' + remotefile.split('/')[:-1])
+        return remotefile in l
+
+def put_file(filename: str, localfilename: str):
+    """
+    Puts a file on the server using the SSH or FTP method.
+    :param filename: The server filename to write to.
+    :param localfilename: The local file to open.
+    """
+    if config['connection_agent'] == 'ssh':
+        assert isinstance(ssh, paramiko.SSHClient)
+        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
+        # Check file exists
+        rootdir = '/'.join(filename.split('/')[:-1])
+        try:
+            sftp.mkdir(rootdir)
+        except IOError:
+            pass
+        with sftp.open(filename, 'wb') as f:
+            local = open(localfilename, 'rb')
+            f.write(local.read())
+            local.close()
+    elif config['connection_agent'] == 'ftp':
+        rootdir = '/'.join(filename.split('/')[:-1])
+        with open(localfilename, 'rb') as local:
+            ftp.storbinary("STOR {}".format(filename), local)
+
+def get_file(filename: str, localfilename: str):
+    """
+    Gets a file on the server using the SSH or FTP method.
+    :param filename: The server filename to read from.
+    :param localfilename: The local file to save to.
+    :return: If the file was successfully downloaded.
+    """
+    if config['connection_agent'] == 'ssh':
+        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
+        try:
+            sftp.get(filename, localfilename)
+        except FileNotFoundError:
+            print("File not found on the server. Did you enter the right filename?")
+            return False
+        return True
+    elif config['connection_agent'] == "ftp":
+        with open(localfilename, 'wb') as f:
+            try:
+                ftp.retrbinary("RETR {}".format(filename), f.write)
+            except Exception as e:
+                print("Error: {}".format(e))
+                return False
+            return True
+
 def get_plugin_name_and_link(b: BeautifulSoup):
-    root_tag = b.find_all('fieldset')[0]
+    """
+    Parses the HTML from the AlliedModders forum and gets the link
+    """
+    try:
+        root_tag = b.find_all('fieldset')[0]
+    # Fieldset is the tag for the attachment table.
+    except IndexError:
+        print("Error: Could not find a fieldset tag in data. Either the HTML layout has changed or the thread was entered incorrectly.")
+        return None, None, None
     tables = root_tag.find_all('td')
+    # Check if the result is empty.
+    if tables == bs4.element.ResultSet(""):
+        print("Error: Could not find any table tags - link is probably incorrect.")
+        return None, None, None
     # Define tables to get data from
     extra_dls = []
     other_smxs = []
@@ -51,18 +130,84 @@ def get_plugin_name_and_link(b: BeautifulSoup):
             # Main DL link, try and get the link out of it
             # But first verify the main dl hasn't already been gotten
             if maindl is None:
+                # A new tuple, with the link to it, and the name of the file
                 maindl = (table.find_all('a')[0].get('href'), table.text.split('(')[1].split('.sp')[0] + '.smx')
             else:
                 other_smxs.append((table.find_all('a')[0].get('href'), table.text.split('(')[1].split('.sp')[0] + '.smx'))
         else:
             if '.smx' in table.text:
                 # Extra plugin SMX
-                # print("Identified extra SMX")
                 other_smxs.append((table.find_all('a')[0].get('href'), table.text.replace('\n', '').split('(')[0][:-1])) # Kill me
             else:
                 # print("Identified other download")
                 extra_dls.append((table.find_all('a')[0].get('href'), table.text.replace('\n', '').split('(')[0][:-1])) # UGH
     return maindl, extra_dls, other_smxs
+
+
+def install_file(flink, ftype='', name="guess"):
+    """
+    Installs from a file or direct download link.
+    :param ftype: The type of file
+    :param flink: The link to the file, or just file name
+    :param name: The name of the file if downloading, or to guess it from the URL.
+    """
+    path = config['server_root'] + '/addons/sourcemod/'
+    if ftype == 'smx':
+        path += 'plugins/'
+    elif ftype == 'cfg':
+        path += 'configs/'
+    elif ftype == 'translation':
+        path += 'translations/'
+    elif ftype == 'script':
+        path += 'scripting/'
+    elif ftype == 'include':
+        path += 'scripting/include/'
+    elif ftype == 'ext':
+        path += 'extensions/'
+    else:
+        # Try and guess the path
+        if '.smx' in flink:
+            path += 'plugins/'
+        elif '.cfg' in flink or '.ini' in flink:
+            path += 'configs/'
+        elif 'phrases' in flink or 'tf2items' in flink:
+            path += 'translations/' # Special case
+        elif '.txt' in flink:
+            path += 'cfg/'
+        elif '.sp' in flink:
+            path += 'scripting/'
+        elif '.inc' in flink:
+            path += 'scripting/includes/'
+        elif '.so' in flink:
+            path += 'extensions/'
+        else:
+            if '/' not in name:
+                print("Unrecognised file type. Cannot install properly. Please provide a directory along with the name.")
+                return
+            else:
+                print("Warning: Unrecognised file type. Installing into the directory you provided...")
+    if not "http://" in flink and not "https://" in flink:
+        if name == "guess":
+            put_file(path + flink.split('/')[-1], flink)
+        else:
+            put_file(path + name, flink)
+    else:
+        if '.php' in flink and name == "guess":
+            print("Error: Cannot extrapolate name from linked file. Cannot install. Please specify a name.")
+            return
+        else:
+            r = requests.get(flink)
+            if r.status_code != 200:
+                print("Failed to get file.")
+                return False
+            if name == "guess": name = flink.split('/')[-1].split('?')[0] # Get the last part of the name without any args or such
+            with tempfile.TemporaryDirectory() as dir:
+                f = open(dir + '/' + name, 'wb')
+                f.write(r.content)
+                f.close()
+
+                put_file(path + name, dir + '/' + name)
+    print("Installed file.")
 
 def get_user_parsed_input():
     # I hate myself
@@ -106,16 +251,28 @@ def get_user_parsed_input():
                 setup(1)
             else:
                 print("Error: Unknown mod to setup.")
+    elif cmd == "installf":
+        if len(newinput) < 2:
+            print("Error: Must specify a file or link to install.")
+        else:
+            if len(newinput) == 2:
+                install_file(newinput[1])
+            elif len(newinput) == 3:
+                install_file(newinput[1], name=newinput[2])
+            else:
+                install_file(newinput[1], newinput[3], newinput[2])
     elif cmd == "help":
         print("List of commands: ")
         print("help: Displays this help message")
         print("exit: Exits smadmintool")
         print("installt: Installs from the specified threads")
         print("installdir: Installs all files froum the specified directory.")
-        print("This directory must be laid out like an addons/ directory, with a sourcemod directory in it and such.")
+        print("\tThis directory must be laid out like an addons/ directory, with a sourcemod directory in it and such.")
         print("edit: Edits the specified file.")
         print("setup metamod: Downloads and installs Metamod:Source.")
         print("setup sourcemod: Downloads and installs SourceMod.")
+        print("installf: Installs from a file or direct link.")
+        print("\tThis command goes in the format: installf file <file_to_install_name> <filetype>")
     else:
         print("Invalid command")
 
@@ -187,56 +344,6 @@ def get_user_input_plugin_url(url):
             print("\t" + smx[1])
     return (maindl, extra_dls, other_smxs) if input("Continue? [Y/n] ").lower() == 'y' else (None, None, None)
 
-def exists(remotefile):
-    if config['connection_agent'] == 'ssh':
-        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
-        try:
-            sftp.stat(remotefile)
-        except IOError:
-            return False
-        else:
-            return True
-    elif config['connection_agent'] == 'ftp':
-        l = ftp.nlst(config['server_root'] + '/' + remotefile.split('/')[:-1])
-        return remotefile in l
-
-def put_file(filename, localfilename):
-    if config['connection_agent'] == 'ssh':
-        assert isinstance(ssh, paramiko.SSHClient)
-        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
-        # Check file exists
-        rootdir = '/'.join(filename.split('/')[:-1])
-        try:
-            sftp.mkdir(rootdir)
-        except IOError:
-            pass
-        with sftp.open(filename, 'wb') as f:
-            local = open(localfilename, 'rb')
-            f.write(local.read())
-            local.close()
-    elif config['connection_agent'] == 'ftp':
-        rootdir = '/'.join(filename.split('/')[:-1])
-        with open(localfilename, 'rb') as local:
-            ftp.storbinary("STOR {}".format(filename), local)
-
-def get_file(filename, localfilename):
-    if config['connection_agent'] == 'ssh':
-        sftp = paramiko.SFTPClient.from_transport(ssh.get_transport())
-        try:
-            sftp.get(filename, localfilename)
-        except FileNotFoundError:
-            print("File not found on the server. Did you enter the right filename?")
-            return False
-        return True
-    elif config['connection_agent'] == "ftp":
-        with open(localfilename, 'wb') as f:
-            try:
-                ftp.retrbinary("RETR {}".format(filename), f.write)
-            except Exception as e:
-                print("Error: {}".format(e))
-                return False
-            return True
-
 def download_plugin(maindl: tuple, extra: list, other_smxs: list):
     to_dl = []
     if other_smxs != []:
@@ -303,10 +410,12 @@ def download_plugin(maindl: tuple, extra: list, other_smxs: list):
                 # Identify filetype
                 nname = "http://forums.alliedmods.net/" + file[0]
                 remotedir = '/addons/sourcemod/'
-                if '.txt' in file[1]:
+                if 'phrases' in file[1] or \
+                   'tf2items' in file[1]:
                     remotedir += 'translations/'
                 elif '.cfg' in file[1] or \
-                    'adminmenu_' in file[1]:
+                    'adminmenu_' in file[1] or \
+                    '.txt' in file[1]:
                     remotedir += 'configs/'
                 elif '.sp' in file[1]:
                     remotedir += 'scripting/'
